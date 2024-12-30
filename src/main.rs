@@ -9,8 +9,13 @@ fn main() {
         let stdin = io::stdin();
 
         let mut input = String::new();
-        stdin.read_line(&mut input).unwrap();
+        stdin.read_line(&mut input).expect("stdin to read input");
 
-        println!("{}: command not found", input.trim());
+        match input.trim_end() {
+            "exit 0" => std::process::exit(0),
+            _ => {
+                println!("{}: command not found", input.trim());
+            }
+        }
     }
 }
