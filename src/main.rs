@@ -17,9 +17,13 @@ fn handle_command(args: Vec<&str>) {
         "echo" => {
             println!("{}", rest);
         }
+        "pwd" => {
+            let pwd = std::env::var("PWD").expect("PWD should exist");
+            println!("{}", pwd);
+        }
         "exit" => std::process::exit(rest.parse::<i32>().expect("code should be a valid number")),
         "type" => {
-            if matches!(rest, "echo" | "exit" | "type") {
+            if matches!(rest, "echo" | "exit" | "type" | "pwd") {
                 println!("{} is a shell builtin", rest);
             } else {
                 let paths = std::env::var("PATH").expect("PATH should be set");
