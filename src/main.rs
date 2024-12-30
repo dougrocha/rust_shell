@@ -1,21 +1,126 @@
 #[allow(unused_imports)]
+use anyhow::anyhow;
 use std::io::Write;
-use std::{env, io::BufRead, path::Path, process::Command};
+use std::path::Path;
+use std::{env, fmt::Display, io::BufRead, process::Command};
 
-fn handle_command(args: Vec<&str>) {
-    let mut args = args.iter();
-    let Some(command) = args.next() else {
-        return;
-    };
+#[derive(Debug)]
+enum Group<'a> {
+    SingleQuote(&'a str),
+    DoubleQuote(&'a str),
+    Default(&'a str),
+}
 
-    let rest: Vec<&str> = args.copied().collect();
+impl<'a> Group<'a> {
+    fn as_str(&self) -> &'a str {
+        match self {
+            Group::SingleQuote(s) | Group::DoubleQuote(s) | Group::Default(s) => s,
+        }
+    }
+}
 
-    let rest = rest.join(" ");
-    let rest: &str = rest.as_ref();
+impl Display for Group<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
 
-    match *command {
+struct CaptureGroups<'a> {
+    whole: &'a str,
+    rest: &'a str,
+    byte: usize,
+}
+
+impl<'a> CaptureGroups<'a> {
+    fn new(input: &'a str) -> Self {
+        Self {
+            whole: input,
+            rest: input,
+            byte: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for CaptureGroups<'a> {
+    type Item = anyhow::Result<Group<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut start_byte = self.byte;
+
+        let mut chars = self.rest.chars();
+        let c = chars.next()?;
+        self.rest = chars.as_str();
+        self.byte += 1;
+
+        #[derive(Debug)]
+        enum Started {
+            SingleQuote,
+            DoubleQuote,
+            // Group that is surrounded by spaces
+            Default,
+        }
+
+        let started = match c {
+            '\'' => Started::SingleQuote,
+            '\"' => Started::DoubleQuote,
+            ' ' => return Some(Err(anyhow!("Will not parse space char"))),
+            _ => Started::Default,
+        };
+
+        match started {
+            Started::SingleQuote => {
+                start_byte += 1;
+                loop {
+                    let Some(c) = chars.next() else {
+                        self.byte += 1;
+                        break;
+                    };
+
+                    self.byte += 1;
+                    if c == '\'' {
+                        break;
+                    }
+                }
+            }
+            Started::DoubleQuote => {
+                return Some(Err(anyhow!("DoubleQuote not implemented yet!")));
+            }
+            Started::Default => loop {
+                let Some(c) = chars.next() else {
+                    self.byte += 1;
+                    break;
+                };
+
+                self.byte += 1;
+                if c == ' ' {
+                    break;
+                }
+            },
+        };
+
+        let group = &self.whole[start_byte..self.byte - 1];
+        self.rest = chars.as_str();
+
+        Some(Ok(Group::Default(group)))
+    }
+}
+
+fn handle_command(args: &str) {
+    let (command, rest) = args
+        .split_once(" ")
+        .map(|(x, y)| (x.trim(), y.trim()))
+        .unwrap_or((args.trim(), ""));
+
+    let groups = CaptureGroups::new(rest);
+
+    let groups: Vec<Group> = groups.filter_map(Result::ok).collect();
+
+    match command {
         "echo" => {
-            println!("{}", rest);
+            for group in groups {
+                print!("{} ", group);
+            }
+            println!();
         }
         "pwd" => {
             let pwd = std::env::current_dir().expect("current dir to exist");
@@ -32,7 +137,23 @@ fn handle_command(args: Vec<&str>) {
                 eprintln!("cd: {}: No such file or directory", pwd.display());
             }
         }
-        "exit" => std::process::exit(rest.parse::<i32>().expect("code should be a valid number")),
+        "cat" => {
+            groups
+                .iter()
+                .filter(|group| matches!(group, Group::Default(_) | Group::SingleQuote(_)))
+                .for_each(|group| {
+                    let file_path = Path::new(group.as_str());
+
+                    let Ok(content) = std::fs::read_to_string(file_path) else {
+                        panic!(
+                            "cat: {}: No such file or directory",
+                            file_path.to_string_lossy(),
+                        );
+                    };
+                    print!("{}", content);
+                });
+        }
+        "exit" => std::process::exit(rest.parse::<i32>().unwrap_or(0)),
         "type" => {
             if matches!(rest, "echo" | "exit" | "type" | "pwd" | "cd") {
                 println!("{} is a shell builtin", rest);
@@ -88,12 +209,10 @@ fn main() {
         let mut input = String::new();
         stdin.read_line(&mut input).expect("stdin to read input");
 
-        let args: Vec<&str> = input.trim_end().split(" ").collect();
-
-        if args.is_empty() {
+        if input.is_empty() {
             continue;
         }
 
-        handle_command(args);
+        handle_command(&input);
     }
 }
