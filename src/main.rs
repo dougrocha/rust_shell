@@ -1,5 +1,10 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::{
+    env::{self},
+    fs,
+    path::{Path, PathBuf},
+};
 
 enum Command {
     Echo,
@@ -33,6 +38,22 @@ impl Command {
                 if matches!(rest, "echo" | "exit" | "type") {
                     println!("{} is a shell builtin", rest);
                 } else {
+                    let paths = env::var("PATH").expect("PATH should be set");
+
+                    for path in paths.split(":") {
+                        let mut path = PathBuf::from(path);
+                        path.push(rest);
+
+                        if path.exists() {
+                            println!(
+                                "{} is {}",
+                                rest,
+                                path.to_str().expect("Path should be shown as string")
+                            );
+                            return;
+                        }
+                    }
+
                     println!("{}: not found", rest);
                 }
             }
