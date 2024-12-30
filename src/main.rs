@@ -48,55 +48,58 @@ impl<'a> Iterator for CaptureGroups<'a> {
         let mut start_byte = self.byte;
 
         let mut chars = self.rest.chars();
-        let c = chars.next()?;
-        self.rest = chars.as_str();
-        self.byte += 1;
 
-        #[derive(Debug)]
-        enum Started {
-            SingleQuote,
-            DoubleQuote,
-            // Group that is surrounded by spaces
-            Default,
-        }
+        'outer: loop {
+            let c = chars.next()?;
+            self.rest = chars.as_str();
+            self.byte += 1;
 
-        let started = match c {
-            '\'' => Started::SingleQuote,
-            '\"' => Started::DoubleQuote,
-            ' ' => return Some(Err(anyhow!("Will not parse space char"))),
-            _ => Started::Default,
-        };
+            match c {
+                '\'' => {
+                    start_byte += 1;
+                    loop {
+                        let Some(c) = chars.next() else {
+                            self.byte += 1;
+                            break 'outer;
+                        };
 
-        match started {
-            Started::SingleQuote => {
-                start_byte += 1;
-                loop {
+                        self.byte += 1;
+                        if c == '\'' {
+                            break 'outer;
+                        }
+                    }
+                }
+                '\"' => {
+                    start_byte += 1;
+                    loop {
+                        let Some(c) = chars.next() else {
+                            self.byte += 1;
+                            break 'outer;
+                        };
+
+                        self.byte += 1;
+                        if c == '\"' {
+                            break 'outer;
+                        }
+                    }
+                }
+                ' ' => {
+                    start_byte += 1;
+                    continue;
+                }
+                _ => loop {
                     let Some(c) = chars.next() else {
                         self.byte += 1;
-                        break;
+                        break 'outer;
                     };
 
                     self.byte += 1;
-                    if c == '\'' {
-                        break;
+                    if c == ' ' {
+                        break 'outer;
                     }
-                }
-            }
-            Started::DoubleQuote => {
-                return Some(Err(anyhow!("DoubleQuote not implemented yet!")));
-            }
-            Started::Default => loop {
-                let Some(c) = chars.next() else {
-                    self.byte += 1;
-                    break;
-                };
-
-                self.byte += 1;
-                if c == ' ' {
-                    break;
-                }
-            },
-        };
+                },
+            };
+        }
 
         let group = &self.whole[start_byte..self.byte - 1];
         self.rest = chars.as_str();
