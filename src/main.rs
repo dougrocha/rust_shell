@@ -11,11 +11,14 @@ fn main() {
         let mut input = String::new();
         stdin.read_line(&mut input).expect("stdin to read input");
 
-        match input.trim_end() {
-            "exit 0" => std::process::exit(0),
-            _ => {
-                println!("{}: command not found", input.trim());
-            }
+        let Some(command) = input.trim_end().split_once(" ") else {
+            continue;
+        };
+
+        match command {
+            ("echo", str) => println!("echo {}", str),
+            ("exit", _) => std::process::exit(0),
+            (command, _) => println!("{}: command not found", command),
         }
     }
 }
