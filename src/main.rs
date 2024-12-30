@@ -1,6 +1,6 @@
 #[allow(unused_imports)]
 use std::io::Write;
-use std::{env, io::BufRead, process::Command};
+use std::{env, io::BufRead, path::Path, process::Command};
 
 fn handle_command(args: Vec<&str>) {
     let mut args = args.iter();
@@ -21,9 +21,18 @@ fn handle_command(args: Vec<&str>) {
             let pwd = std::env::current_dir().expect("current dir to exist");
             println!("{}", pwd.display());
         }
+        "cd" => {
+            let new_dir = Path::new(rest);
+            if std::env::set_current_dir(new_dir).is_err() {
+                println!(
+                    "cd: {}: No such file or directory",
+                    new_dir.to_string_lossy()
+                );
+            }
+        }
         "exit" => std::process::exit(rest.parse::<i32>().expect("code should be a valid number")),
         "type" => {
-            if matches!(rest, "echo" | "exit" | "type" | "pwd") {
+            if matches!(rest, "echo" | "exit" | "type" | "pwd" | "cd") {
                 println!("{} is a shell builtin", rest);
             } else {
                 let paths = std::env::var("PATH").expect("PATH should be set");
