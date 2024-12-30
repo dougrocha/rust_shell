@@ -18,8 +18,8 @@ fn handle_command(args: Vec<&str>) {
             println!("{}", rest);
         }
         "pwd" => {
-            let pwd = std::env::var("PWD").expect("PWD should exist");
-            println!("{}", pwd);
+            let pwd = std::env::current_dir().expect("current dir to exist");
+            println!("{}", pwd.display());
         }
         "exit" => std::process::exit(rest.parse::<i32>().expect("code should be a valid number")),
         "type" => {
