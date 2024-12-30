@@ -23,9 +23,13 @@ fn handle_command(args: Vec<&str>) {
         }
         "cd" => {
             let mut pwd = std::env::current_dir().expect("current dir to exist");
-            pwd.push(rest);
+            if rest == "~" {
+                pwd.push(std::env::var("HOME").expect("HOME var to exist"));
+            } else {
+                pwd.push(rest);
+            }
             if std::env::set_current_dir(&pwd).is_err() {
-                println!("cd: {}: No such file or directory", pwd.to_string_lossy());
+                eprintln!("cd: {}: No such file or directory", pwd.display());
             }
         }
         "exit" => std::process::exit(rest.parse::<i32>().expect("code should be a valid number")),
