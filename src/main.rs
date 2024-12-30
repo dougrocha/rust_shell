@@ -22,12 +22,10 @@ fn handle_command(args: Vec<&str>) {
             println!("{}", pwd.display());
         }
         "cd" => {
-            let new_dir = Path::new(rest);
-            if std::env::set_current_dir(new_dir).is_err() {
-                println!(
-                    "cd: {}: No such file or directory",
-                    new_dir.to_string_lossy()
-                );
+            let mut pwd = std::env::current_dir().expect("current dir to exist");
+            pwd.push(rest);
+            if std::env::set_current_dir(&pwd).is_err() {
+                println!("cd: {}: No such file or directory", pwd.to_string_lossy());
             }
         }
         "exit" => std::process::exit(rest.parse::<i32>().expect("code should be a valid number")),
