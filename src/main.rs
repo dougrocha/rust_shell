@@ -4,7 +4,6 @@ use std::io::Write;
 use std::path::Path;
 use std::{env, io::BufRead, process::Command};
 
-#[derive(Clone, Copy)]
 struct CaptureGroups<'a> {
     whole: &'a str,
     rest: &'a str,
@@ -62,16 +61,43 @@ impl Iterator for CaptureGroups<'_> {
                 Some(Ok(group.trim().to_string()))
             }
             Started::DoubleQuote => {
-                let stop = self.rest[1..]
-                    .find('\"')
-                    .map(|x| x + 1)
-                    .unwrap_or(self.rest.len());
+                self.rest = &self.rest[1..];
+                self.byte += 1;
 
-                let group = &self.rest[1..stop];
-                self.rest = &self.rest[stop + 1..];
-                self.byte = stop + 1;
+                let mut chars = self.rest.chars();
+                let mut group = String::new();
+                let mut prev_escape = false;
 
-                Some(Ok(group.trim().to_string()))
+                while let Some(c) = chars.next() {
+                    match (c, prev_escape) {
+                        ('"', false) => {
+                            self.rest = chars.as_str();
+                            self.byte += group.len() + 1;
+                            return Some(Ok(group));
+                        }
+                        ('\\', false) => {
+                            prev_escape = true;
+                        }
+                        ('\\', true) | ('"', true) => {
+                            group.push(c);
+                            prev_escape = false;
+                        }
+                        (_, true) => {
+                            group.push('\\');
+                            group.push(c);
+                            prev_escape = false;
+                        }
+                        _ => {
+                            group.push(c);
+                            prev_escape = false;
+                        }
+                    }
+                }
+
+                self.rest = chars.as_str();
+                self.byte += group.len();
+
+                Some(Ok(group))
             }
             Started::BackSlash => {
                 let symbol = chars.next().unwrap_or_default();
@@ -81,7 +107,7 @@ impl Iterator for CaptureGroups<'_> {
                 Some(Ok(symbol.to_string()))
             }
             Started::Default => {
-                let stop = self.rest.find([' ', '\\']).unwrap_or(self.rest.len());
+                let stop = self.rest.find([' ', '\\', '\"']).unwrap_or(self.rest.len());
 
                 let group = &self.rest[..stop];
                 self.rest = &self.rest[stop..];
