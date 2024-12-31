@@ -128,16 +128,18 @@ impl Iterator for CaptureGroups<'_> {
 }
 
 fn handle_command(args: &str) {
-    let (command, rest) = args
-        .split_once(" ")
-        .map(|(x, y)| (x.trim(), y.trim_start()))
-        .unwrap_or((args.trim(), ""));
-
-    let groups = CaptureGroups::new(rest.trim());
+    let groups = CaptureGroups::new(args.trim());
 
     let groups: Vec<_> = groups.filter_map(Result::ok).collect();
 
-    match command {
+    let Some(command) = groups.first() else {
+        return;
+    };
+
+    // Skip 2 for command name and then the following space
+    let groups: Vec<_> = groups.iter().skip(2).collect();
+
+    match command.as_str() {
         "echo" => {
             for group in groups {
                 print!("{}", group);
@@ -229,7 +231,7 @@ fn handle_command(args: &str) {
                 None
             }) {
                 Command::new(path.into_os_string().into_string().unwrap())
-                    .arg(rest.trim())
+                    .arg(groups.iter().map(|x| x.as_str()).collect::<String>())
                     .status()
                     .expect("failed to execute process");
             } else {
