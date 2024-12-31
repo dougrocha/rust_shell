@@ -2,29 +2,9 @@
 use anyhow::anyhow;
 use std::io::Write;
 use std::path::Path;
-use std::{env, fmt::Display, io::BufRead, process::Command};
+use std::{env, io::BufRead, process::Command};
 
-#[derive(Debug)]
-enum Group<'a> {
-    SingleQuote(&'a str),
-    DoubleQuote(&'a str),
-    Default(&'a str),
-}
-
-impl<'a> Group<'a> {
-    fn as_str(&self) -> &'a str {
-        match self {
-            Group::SingleQuote(s) | Group::DoubleQuote(s) | Group::Default(s) => s,
-        }
-    }
-}
-
-impl Display for Group<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
+#[derive(Clone, Copy)]
 struct CaptureGroups<'a> {
     whole: &'a str,
     rest: &'a str,
@@ -41,87 +21,100 @@ impl<'a> CaptureGroups<'a> {
     }
 }
 
-impl<'a> Iterator for CaptureGroups<'a> {
-    type Item = anyhow::Result<Group<'a>>;
+impl Iterator for CaptureGroups<'_> {
+    type Item = anyhow::Result<String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut start_byte = self.byte;
-
         let mut chars = self.rest.chars();
+        let c = chars.next()?;
+        self.byte += c.len_utf8();
 
-        'outer: loop {
-            let c = chars.next()?;
-            self.rest = chars.as_str();
-            self.byte += 1;
-
-            match c {
-                '\'' => {
-                    start_byte += 1;
-                    loop {
-                        let Some(c) = chars.next() else {
-                            self.byte += 1;
-                            break 'outer;
-                        };
-
-                        self.byte += 1;
-                        if c == '\'' {
-                            break 'outer;
-                        }
-                    }
-                }
-                '\"' => {
-                    start_byte += 1;
-                    loop {
-                        let Some(c) = chars.next() else {
-                            self.byte += 1;
-                            break 'outer;
-                        };
-
-                        self.byte += 1;
-                        if c == '\"' {
-                            break 'outer;
-                        }
-                    }
-                }
-                ' ' => {
-                    start_byte += 1;
-                    continue;
-                }
-                _ => loop {
-                    let Some(c) = chars.next() else {
-                        self.byte += 1;
-                        break 'outer;
-                    };
-
-                    self.byte += 1;
-                    if c == ' ' {
-                        break 'outer;
-                    }
-                },
-            };
+        #[derive(Debug)]
+        enum Started {
+            SingleQuote,
+            DoubleQuote,
+            BackSlash,
+            Spaces,
+            // Group that is surrounded by spaces
+            Default,
         }
 
-        let group = &self.whole[start_byte..self.byte - 1];
-        self.rest = chars.as_str();
+        let started = match c {
+            '\'' => Started::SingleQuote,
+            '\"' => Started::DoubleQuote,
+            '\\' => Started::BackSlash,
+            ' ' => Started::Spaces,
+            '\n' => return None,
+            _ => Started::Default,
+        };
 
-        Some(Ok(Group::Default(group)))
+        match started {
+            Started::SingleQuote => {
+                let stop = self.rest[1..]
+                    .find('\'')
+                    .map(|x| x + 1)
+                    .unwrap_or(self.rest.len());
+
+                let group = &self.rest[1..stop];
+                self.rest = &self.rest[stop + 1..];
+                self.byte = stop + 1;
+
+                Some(Ok(group.trim().to_string()))
+            }
+            Started::DoubleQuote => {
+                let stop = self.rest[1..]
+                    .find('\"')
+                    .map(|x| x + 1)
+                    .unwrap_or(self.rest.len());
+
+                let group = &self.rest[1..stop];
+                self.rest = &self.rest[stop + 1..];
+                self.byte = stop + 1;
+
+                Some(Ok(group.trim().to_string()))
+            }
+            Started::BackSlash => {
+                let symbol = chars.next().unwrap_or_default();
+                self.rest = chars.as_str();
+                self.byte += symbol.len_utf8();
+
+                Some(Ok(symbol.to_string()))
+            }
+            Started::Default => {
+                let stop = self.rest.find([' ', '\\']).unwrap_or(self.rest.len());
+
+                let group = &self.rest[..stop];
+                self.rest = &self.rest[stop..];
+                self.byte = stop;
+
+                Some(Ok(group.trim().to_string()))
+            }
+            Started::Spaces => {
+                let stop = self.rest.find(|c| c != ' ').unwrap_or(self.rest.len());
+
+                self.rest = &self.rest[stop..];
+                self.byte += stop;
+
+                Some(Ok(" ".to_string()))
+            }
+        }
     }
 }
 
 fn handle_command(args: &str) {
     let (command, rest) = args
         .split_once(" ")
-        .map(|(x, y)| (x.trim(), y.trim()))
+        .map(|(x, y)| (x.trim(), y.trim_start()))
         .unwrap_or((args.trim(), ""));
 
-    let groups = CaptureGroups::new(rest);
+    let groups = CaptureGroups::new(rest.trim());
 
-    let groups: Vec<Group> = groups.filter_map(Result::ok).collect();
+    let groups: Vec<_> = groups.filter_map(Result::ok).collect();
 
     match command {
         "echo" => {
             for group in groups {
-                print!("{} ", group);
+                print!("{}", group);
             }
             println!();
         }
@@ -130,12 +123,20 @@ fn handle_command(args: &str) {
             println!("{}", pwd.display());
         }
         "cd" => {
+            if groups.len() > 1 {
+                eprintln!("cd: too many arguments");
+            }
+
+            let dir = groups.first().map(|x| x.as_str().trim()).unwrap_or("~");
+
             let mut pwd = std::env::current_dir().expect("current dir to exist");
-            if rest == "~" {
+
+            if dir == "~" {
                 pwd.push(std::env::var("HOME").expect("HOME var to exist"));
             } else {
-                pwd.push(rest);
+                pwd.push(dir);
             }
+
             if std::env::set_current_dir(&pwd).is_err() {
                 eprintln!("cd: {}: No such file or directory", pwd.display());
             }
@@ -143,9 +144,9 @@ fn handle_command(args: &str) {
         "cat" => {
             groups
                 .iter()
-                .filter(|group| matches!(group, Group::Default(_) | Group::SingleQuote(_)))
+                .filter(|x| !x.trim().is_empty())
                 .for_each(|group| {
-                    let file_path = Path::new(group.as_str());
+                    let file_path = Path::new(group.as_str().trim());
 
                     let Ok(content) = std::fs::read_to_string(file_path) else {
                         panic!(
@@ -156,27 +157,38 @@ fn handle_command(args: &str) {
                     print!("{}", content);
                 });
         }
-        "exit" => std::process::exit(rest.parse::<i32>().unwrap_or(0)),
-        "type" => {
-            if matches!(rest, "echo" | "exit" | "type" | "pwd" | "cd") {
-                println!("{} is a shell builtin", rest);
-            } else {
-                let paths = std::env::var("PATH").expect("PATH should be set");
+        "exit" => {
+            let exit_code = groups
+                .first()
+                .and_then(|x| x.as_str().parse::<i32>().ok())
+                .unwrap_or(0);
 
-                if let Some(path) = env::split_paths(&paths).find_map(|path| {
-                    let path = path.join(rest);
-                    if path.is_file() {
-                        return Some(path);
-                    }
-                    None
-                }) {
-                    println!(
-                        "{} is {}",
-                        rest,
-                        path.into_os_string().into_string().unwrap()
-                    );
+            std::process::exit(exit_code);
+        }
+        "type" => {
+            let commands: Vec<_> = groups.iter().map(|x| x.as_str().trim()).collect();
+
+            for command in commands {
+                if matches!(command, "echo" | "exit" | "type" | "pwd" | "cd") {
+                    println!("{} is a shell builtin", command);
                 } else {
-                    println!("{}: not found", rest);
+                    let paths = std::env::var("PATH").expect("PATH should be set");
+
+                    if let Some(path) = env::split_paths(&paths).find_map(|path| {
+                        let path = path.join(command);
+                        if path.is_file() {
+                            return Some(path);
+                        }
+                        None
+                    }) {
+                        println!(
+                            "{} is {}",
+                            command,
+                            path.into_os_string().into_string().unwrap()
+                        );
+                    } else {
+                        println!("{}: not found", command);
+                    }
                 }
             }
         }
@@ -191,11 +203,11 @@ fn handle_command(args: &str) {
                 None
             }) {
                 Command::new(path.into_os_string().into_string().unwrap())
-                    .arg(rest)
+                    .arg(rest.trim())
                     .status()
                     .expect("failed to execute process");
             } else {
-                println!("{}: command not found", command);
+                eprintln!("{}: command not found", command);
             }
         }
     }
