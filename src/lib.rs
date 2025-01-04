@@ -1,10 +1,10 @@
 use command::Command;
+use miette::LabeledSpan;
 use parser::Parser;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 pub mod command;
 pub mod parser;
-pub mod tokenizer;
 
 pub struct ShellContext {
     pub commands: HashMap<String, Box<dyn Command>>,
@@ -32,33 +32,40 @@ impl ShellContext {
     }
 }
 
-pub fn handle_command(context: &mut ShellContext, args: &str) {
-    let groups: Vec<String> = Parser::new(args).filter_map(Result::ok).collect();
+pub fn handle_command(
+    context: &mut ShellContext,
+    input: &str,
+) -> anyhow::Result<(), miette::Error> {
+    let parser = Parser::new(input);
 
-    let Some(command) = groups.first().cloned() else {
-        println!();
-        return; // No command provided
+    // Handle parser error
+    if let Some(err) = parser.filter_map(Result::err).next() {
+        return Err(err);
+    }
+
+    let groups: Vec<String> = parser.filter_map(Result::ok).collect();
+
+    let command = if let Some(command) = groups.first() {
+        command.trim()
+    } else {
+        return Ok(());
     };
+
     let command_args = &groups[1..];
 
     let builtins = &context.commands;
 
-    if let Some(command) = builtins.values().find(|x| x.name() == command.as_str()) {
+    if let Some(command) = builtins.values().find(|x| x.name() == command) {
+        // TODO: use question mark and throw error inside of run
         if let Err(err) = command.run(command_args) {
             eprintln!("Error running command: {}", err);
         }
     } else {
-        let paths = std::env::var("PATH").expect("PATH should be set");
+        let paths: Vec<PathBuf> =
+            std::env::split_paths(&std::env::var("PATH").expect("PATH should be set")).collect();
 
-        if let Some(path) = std::env::split_paths(&paths).find_map(|path| {
-            let path = path.join(&command);
-            if path.is_file() {
-                Some(path)
-            } else {
-                None
-            }
-        }) {
-            let status = std::process::Command::new(path)
+        if let Some(command_path) = find_command_in_path(&paths, command) {
+            let status = std::process::Command::new(command_path)
                 .args(groups.iter().map(|x| x.as_str()))
                 .status();
 
@@ -68,7 +75,29 @@ pub fn handle_command(context: &mut ShellContext, args: &str) {
                 Err(err) => eprintln!("Failed to execute command: {}", err),
             }
         } else {
-            eprintln!("{}: command not found", command);
+            let cmd_len = input.find(" ").unwrap_or(input.len());
+
+            return Err(miette::miette! {
+                labels = vec![
+                    LabeledSpan::at(0..cmd_len, "here"),
+                ],
+                help = format!("{command:?} is neither a built-in or a known external command"),
+                "Command failed to run: {command:?}",
+            }
+            .with_source_code(input.to_string()));
         }
     };
+
+    Ok(())
+}
+
+fn find_command_in_path(paths: &[PathBuf], command: &str) -> Option<PathBuf> {
+    paths.iter().find_map(|path| {
+        let path = path.join(command);
+        if path.is_file() {
+            Some(path)
+        } else {
+            None
+        }
+    })
 }

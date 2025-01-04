@@ -1,22 +1,42 @@
-use anyhow::Result;
+use miette::{Diagnostic, Error};
+use thiserror::Error;
+
+#[derive(Diagnostic, Debug, Error)]
+#[error("Unexpected EOF")]
+pub struct Eof;
+
+#[derive(Diagnostic, Debug, Error)]
+#[error("Unclosed Quote")]
+pub struct UnclosedQuote;
+
+pub struct Token<'a> {
+    pub source: &'a str,
+    pub offset: usize,
+    pub kind: usize,
+}
 
 #[derive(Clone, Copy)]
 pub struct Parser<'a> {
-    pub input: &'a str,
+    pub whole: &'a str,
+    pub rest: &'a str,
     pub position: usize,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str) -> Self {
-        Self { input, position: 0 }
+        Self {
+            whole: input,
+            rest: input,
+            position: 0,
+        }
     }
 }
 
 impl Iterator for Parser<'_> {
-    type Item = Result<String>;
+    type Item = Result<String, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut chars = self.input.chars();
+        let mut chars = self.rest.chars();
         let c = chars.next()?;
         self.position += c.len_utf8();
 
@@ -41,17 +61,17 @@ impl Iterator for Parser<'_> {
 
         match started {
             Started::SingleQuote => {
-                self.input = &self.input[1..];
+                self.rest = &self.rest[1..];
                 self.position += 1;
 
-                let mut chars = self.input.chars();
+                let mut chars = self.rest.chars();
                 let mut group = String::new();
                 let mut prev_escape = false;
 
                 while let Some(c) = chars.next() {
                     match (c, prev_escape) {
                         ('\'', false) => {
-                            self.input = chars.as_str();
+                            self.rest = chars.as_str();
                             self.position += group.len() + 1;
                             return Some(Ok(group));
                         }
@@ -75,26 +95,23 @@ impl Iterator for Parser<'_> {
                     }
                 }
 
-                self.input = chars.as_str();
+                self.rest = chars.as_str();
                 self.position += group.len();
 
-                Some(Err(anyhow::anyhow!(
-                    "Unclosed single quote at position {}",
-                    self.position
-                )))
+                Some(Err(UnclosedQuote.into()))
             }
             Started::DoubleQuote => {
-                self.input = &self.input[1..];
+                self.rest = &self.rest[1..];
                 self.position += 1;
 
-                let mut chars = self.input.chars();
+                let mut chars = self.rest.chars();
                 let mut group = String::new();
                 let mut prev_escape = false;
 
                 while let Some(c) = chars.next() {
                     match (c, prev_escape) {
                         ('"', false) => {
-                            self.input = chars.as_str();
+                            self.rest = chars.as_str();
                             self.position += group.len() + 1;
                             return Some(Ok(group));
                         }
@@ -118,37 +135,31 @@ impl Iterator for Parser<'_> {
                     }
                 }
 
-                self.input = chars.as_str();
+                self.rest = chars.as_str();
                 self.position += group.len();
 
-                Some(Err(anyhow::anyhow!(
-                    "Unclosed double quote at position {}",
-                    self.position
-                )))
+                Some(Err(UnclosedQuote.into()))
             }
             Started::BackSlash => {
                 let symbol = chars.next().unwrap_or_default();
-                self.input = chars.as_str();
+                self.rest = chars.as_str();
                 self.position += symbol.len_utf8();
 
                 Some(Ok(symbol.to_string()))
             }
             Started::Default => {
-                let stop = self
-                    .input
-                    .find([' ', '\\', '\"'])
-                    .unwrap_or(self.input.len());
+                let stop = self.rest.find([' ', '\\', '\"']).unwrap_or(self.rest.len());
 
-                let group = &self.input[..stop];
-                self.input = &self.input[stop..];
+                let group = &self.rest[..stop];
+                self.rest = &self.rest[stop..];
                 self.position = stop;
 
                 Some(Ok(group.to_string()))
             }
             Started::Spaces => {
-                let stop = self.input.find(|c| c != ' ').unwrap_or(self.input.len());
+                let stop = self.rest.find(|c| c != ' ').unwrap_or(self.rest.len());
 
-                self.input = &self.input[stop..];
+                self.rest = &self.rest[stop..];
                 self.position += stop;
 
                 Some(Ok(" ".to_string()))

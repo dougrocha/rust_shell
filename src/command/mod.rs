@@ -23,9 +23,8 @@ pub fn builtins() -> Vec<Box<dyn Command>> {
     ]
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum CommandType {
-    #[default]
     Builtin,
     External,
     Unknown,
@@ -37,7 +36,7 @@ pub trait Command {
     fn run(&self, groups: &[String]) -> anyhow::Result<()>;
 
     fn command_type(&self) -> CommandType {
-        CommandType::default()
+        CommandType::Builtin
     }
 
     fn is_built_in(&self) -> bool {
